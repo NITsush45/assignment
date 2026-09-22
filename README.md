@@ -1,3 +1,5 @@
+<img width="1141" height="675" alt="Screenshot 2026-09-22 at 7 21 01 PM" src="https://github.com/user-attachments/assets/d856d222-902e-472c-80e9-0a556fe63e5f" />
+
 # Record Reconciliation System
 
 Compares event records between two systems, finds disagreements, and shows them in a multi-tenant-safe UI.
