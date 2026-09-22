@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reconciliation</title>
+    <style>
+        body {
+            font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: #222;
+            margin: 0;
+            background: #f7f7f8;
+        }
+
+        .topbar {
+            background: #1d1d1f;
+            color: #e8e8e8;
+            padding: 10px 24px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+        }
+        .topbar strong { font-size: 14px; letter-spacing: .3px; }
+        .topbar select {
+            background: #333;
+            color: #e8e8e8;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .topbar label { color: #aaa; }
+
+        .page { max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px; }
+
+        .counts {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .chip {
+            font-size: 12px;
+            padding: 3px 9px;
+            border-radius: 4px;
+            background: #e9e9eb;
+            color: #444;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+        .chip:hover { background: #ddd; }
+        .chip.active { border-color: #666; background: #fff; }
+        .chip b { font-weight: 700; margin-right: 2px; }
+        .chip.total { background: #1d1d1f; color: #fff; cursor: default; }
+        .chip.total:hover { background: #1d1d1f; }
+
+        .card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+        thead { background: #fafafa; }
+        th {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .4px;
+            color: #999;
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th.sort { cursor: pointer; user-select: none; }
+        th.sort:hover { color: #444; }
+        th.sorted { color: #222; }
+        th span.dir { font-size: 9px; margin-left: 2px; vertical-align: 1px; }
+
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f2f2f2;
+            font-size: 13px;
+        }
+        tbody tr:hover { background: #fafbfc; }
+        tbody tr:last-child td { border-bottom: 0; }
+
+        .mono { font: 12px/1.4 "SF Mono", Menlo, Consolas, monospace; }
+        .dim { color: #bbb; }
+        .note { color: #888; font-size: 12px; max-width: 280px; line-height: 1.35; }
+
+        .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 1px 8px;
+            border-radius: 10px;
+        }
+        .b-missing_in_b      { background: #ffe0e0; color: #b91c1c; }
+        .b-orphan_reference   { background: #fff3cd; color: #92400e; }
+        .b-duplicate_entry    { background: #dbeafe; color: #1d4ed8; }
+        .b-value_mismatch     { background: #fce4ec; color: #c2185b; }
+        .b-date_mismatch      { background: #e8eaf6; color: #283593; }
+        .b-location_mismatch  { background: #e0f2f1; color: #00695c; }
+        .b-blank_value        { background: #f0f0f0; color: #555; }
+        .b-unparseable_value  { background: #fff8e1; color: #f57f17; }
+
+        .placeholder {
+            text-align: center;
+            padding: 48px 20px;
+            color: #aaa;
+            font-size: 14px;
+        }
+        .err-box {
+            color: #b91c1c;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 12px 16px;
+            font-size: 13px;
+        }
+
+        .footer-note {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 12px;
+            color: #bbb;
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <strong>Reconciliation</strong>
+    <label>Org: <select id="sel-org"></select></label>
+</div>
+
+<div class="page">
+    <div class="counts" id="counts"></div>
+    <div class="card">
+        <div id="grid"><div class="placeholder">Loading...</div></div>
+    </div>
+    <div class="footer-note" id="footer"></div>
+</div>
+
+<script>
+(function () {
+    let org = "";
+    let reasonFilter = "";
+    let sortCol = "record_id";
+    let allReasons = {};
+
+    const $ = id => document.getElementById(id);
+
+    function api(path) {
+        return fetch(path).then(r => {
+            if (!r.ok) throw new Error(r.status);
+            return r.json();
+        });
+    }
+
+    function esc(s) {
+        if (!s) return "";
+        const el = document.createElement("span");
+        el.textContent = s;
+        return el.innerHTML;
+    }
+
+    function prettyReason(r) {
+        return r.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // --- data loading ---
+
+    function boot() {
+        api("/api/orgs/").then(d => {
+            const sel = $("sel-org");
+            d.orgs.forEach(o => {
+                const opt = document.createElement("option");
+                opt.value = o;
+                opt.textContent = o;
+                sel.appendChild(opt);
+            });
+            org = d.orgs[0] || "";
+            refresh();
+        }).catch(() => {
+            $("grid").innerHTML = '<div class="err-box">Cannot reach the server. Is it running on :8000?</div>';
+        });
+    }
+
+    function refresh() {
+        if (!org) return;
+        loadSummary();
+        loadRows();
+    }
+
+    function loadSummary() {
+        api("/api/summary/?org_id=" + encodeURIComponent(org)).then(d => {
+            allReasons = d.by_reason;
+            renderChips(d.total_disagreements, d.by_reason);
+        });
+    }
+
+    function loadRows() {
+        let url = "/api/disagreements/?org_id=" + encodeURIComponent(org);
+        if (reasonFilter) url += "&reason=" + encodeURIComponent(reasonFilter);
+        if (sortCol) url += "&ordering=" + encodeURIComponent(sortCol);
+
+        api(url).then(d => {
+            renderTable(d.results);
+            $("footer").textContent = d.count + " record" + (d.count === 1 ? "" : "s");
+        }).catch(() => {
+            $("grid").innerHTML = '<div class="placeholder">Failed to load.</div>';
+        });
+    }
+
+    // --- rendering ---
+
+    function renderChips(total, byReason) {
+        let html = '<span class="chip total"><b>' + total + '</b> total</span>';
+        const sorted = Object.entries(byReason).sort((a, b) => b[1] - a[1]);
+        sorted.forEach(([key, count]) => {
+            const active = reasonFilter === key ? " active" : "";
+            html += '<span class="chip' + active + '" data-reason="' + key + '"><b>' + count + '</b> ' + prettyReason(key) + '</span>';
+        });
+        if (reasonFilter) {
+            html += '<span class="chip" data-reason="" style="color:#888">clear filter</span>';
+        }
+        $("counts").innerHTML = html;
+
+        $("counts").querySelectorAll(".chip[data-reason]").forEach(el => {
+            el.onclick = () => {
+                reasonFilter = el.dataset.reason;
+                refresh();
+            };
+        });
+    }
+
+    function renderTable(rows) {
+        const el = $("grid");
+        if (!rows.length) {
+            el.innerHTML = '<div class="placeholder">Nothing here — all records agree.</div>';
+            return;
+        }
+
+        const cols = [
+            { key: "record_id",      label: "Record" },
+            { key: "reason",         label: "Type" },
+            { key: "system_a_value", label: "System A" },
+            { key: "system_b_value", label: "System B" },
+            { key: "location_id",    label: "Location" },
+        ];
+
+        let h = "<table><thead><tr>";
+        cols.forEach(c => {
+            const isSorted = sortCol === c.key || sortCol === "-" + c.key;
+            const cls = "sort" + (isSorted ? " sorted" : "");
+            let dir = "";
+            if (sortCol === c.key) dir = '<span class="dir">▲</span>';
+            else if (sortCol === "-" + c.key) dir = '<span class="dir">▼</span>';
+            h += '<th class="' + cls + '" data-col="' + c.key + '">' + c.label + dir + '</th>';
+        });
+        h += "<th>Detail</th></tr></thead><tbody>";
+
+        rows.forEach(r => {
+            h += "<tr>";
+            h += '<td class="mono">' + esc(r.record_id) + '</td>';
+            h += '<td><span class="badge b-' + r.reason + '">' + esc(r.reason_display) + '</span></td>';
+
+            if (r.system_a_value)
+                h += '<td class="mono">' + esc(r.system_a_value) + '</td>';
+            else
+                h += '<td class="dim">—</td>';
+
+            if (r.system_b_value)
+                h += '<td class="mono">' + esc(r.system_b_value) + '</td>';
+            else
+                h += '<td class="dim">—</td>';
+
+            h += '<td class="mono">' + esc(r.location_id) + '</td>';
+            h += '<td class="note">' + esc(r.detail) + '</td>';
+            h += "</tr>";
+        });
+
+        h += "</tbody></table>";
+        el.innerHTML = h;
+
+        el.querySelectorAll("th.sort").forEach(th => {
+            th.onclick = () => {
+                const c = th.dataset.col;
+                sortCol = sortCol === c ? "-" + c : c;
+                loadRows();
+            };
+        });
+    }
+
+    // --- events ---
+
+    $("sel-org").onchange = e => {
+        org = e.target.value;
+        reasonFilter = "";
+        sortCol = "record_id";
+        refresh();
+    };
+
+    boot();
+})();
+</script>
+</body>
+</html>
